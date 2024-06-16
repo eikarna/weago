@@ -72,12 +72,12 @@ func MessageHandler(v *events.Message) {
 	if v.Info.IsGroup {
 		targetJid, err = types.ParseJID(functions.RemoveColonDigits(v.Info.Chat.String()))
 		if err != nil {
-			fmt.Errorf(err.Error())
+			fmt.Println(fmt.Errorf(err.Error()).Error())
 		}
 	} else {
 		targetJid, err = types.ParseJID(functions.RemoveColonDigits(v.Info.Sender.String()))
 		if err != nil {
-			fmt.Errorf(err.Error())
+			fmt.Println(fmt.Errorf(err.Error()).Error())
 		}
 	}
 	fmt.Println("Got Target JID:", targetJid)
