@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/eikarna/weago/enums"
+	"github.com/eikarna/weago/handler/message"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -16,16 +18,19 @@ import (
 )
 
 func eventHandler(evt interface{}) {
+	// Handle event and access mycli.WAClient
 	switch v := evt.(type) {
 	case *events.Message:
-		fmt.Println("Received a message!", v.Message.GetConversation())
+		message.MessageHandler(v)
+	case *events.Receipt:
+		fmt.Println("Received a receipt!")
 	}
 }
 
 func main() {
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	// Make sure you add appropriate DB connector imports, e.g. github.com/mattn/go-sqlite3 for SQLite
-	container, err := sqlstore.New("sqlite3", "file:database/session.db?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New("sqlite3", "file:database/session.db?_foreign_keys=on&mode=rwc&cache=shared&_sync=1", dbLog)
 	if err != nil {
 		panic(err)
 	}
@@ -35,13 +40,13 @@ func main() {
 		panic(err)
 	}
 	clientLog := waLog.Stdout("Client", "DEBUG", true)
-	client := whatsmeow.NewClient(deviceStore, clientLog)
-	client.AddEventHandler(eventHandler)
+	enums.Client = whatsmeow.NewClient(deviceStore, clientLog)
+	enums.EventHandlerID = enums.Client.AddEventHandler(eventHandler)
 
-	if client.Store.ID == nil {
+	if enums.Client.Store.ID == nil {
 		// No ID stored, new login
-		qrChan, _ := client.GetQRChannel(context.Background())
-		err = client.Connect()
+		qrChan, _ := enums.Client.GetQRChannel(context.Background())
+		err = enums.Client.Connect()
 		if err != nil {
 			panic(err)
 		}
@@ -58,7 +63,7 @@ func main() {
 		}
 	} else {
 		// Already logged in, just connect
-		err = client.Connect()
+		err = enums.Client.Connect()
 		if err != nil {
 			panic(err)
 		}
@@ -69,5 +74,5 @@ func main() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
 
-	client.Disconnect()
+	enums.Client.Disconnect()
 }
