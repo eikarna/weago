@@ -18,16 +18,23 @@ import (
 )
 
 func eventHandler(evt interface{}) {
-	// Handle event and access mycli.WAClient
+	// Handle event
 	switch v := evt.(type) {
 	case *events.Message:
 		message.MessageHandler(v)
 	case *events.Receipt:
 		fmt.Println("Received a receipt!")
+	default:
+		fmt.Printf("Unhandled event: %#v", v)
 	}
 }
 
 func main() {
+	// Load config.json
+	err := enums.LoadConfig()
+	if err != nil {
+		panic(err)
+	}
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	// Make sure you add appropriate DB connector imports, e.g. github.com/mattn/go-sqlite3 for SQLite
 	container, err := sqlstore.New("sqlite3", "file:database/session.db?_foreign_keys=on&mode=rwc&cache=shared&_sync=1", dbLog)
@@ -45,6 +52,7 @@ func main() {
 
 	if enums.Client.Store.ID == nil {
 		// No ID stored, new login
+		// enable this if you want QR Pairing
 		qrChan, _ := enums.Client.GetQRChannel(context.Background())
 		err = enums.Client.Connect()
 		if err != nil {
@@ -53,9 +61,11 @@ func main() {
 		for evt := range qrChan {
 			if evt.Event == "code" {
 				// Render the QR code here
-				// e.g. qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				// or just manually `echo 2@... | qrencode -t ansiutf8` in a terminal
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+				enums.Once.Do(func() {
+					paircode, _ := enums.Client.PairPhone(enums.BotInfo.NumberString, true, 6, "Safari (IOS)")
+					fmt.Println("PAIRING CODE:", paircode)
+				})
 				// fmt.Println("QR code:", evt.Code)
 			} else {
 				fmt.Println("Login event:", evt.Event)
