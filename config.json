@@ -1,0 +1,7 @@
+{
+	"bot_number": "PHONE_NUMBER",
+	"owner_number": "PHONE_NUMBER",
+	"admin_list": [],
+	"gemma_key": "YOUR_API_KEY",
+	"db_path": "./database/session.db"
+}
