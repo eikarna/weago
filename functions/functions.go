@@ -156,7 +156,6 @@ func UploadImage(filePath, mimeType string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %v", err)
 	}
-	// fmt.Printf("Got RespBody-UploadImage: %#v\n\n", respBody)
 	// Extract the file URI from the response
 	var responseMap map[string]interface{}
 	if err := json.Unmarshal(respBody, &responseMap); err != nil {
@@ -187,61 +186,3 @@ func SaveBufferToTempFile(bufferData []byte, fileExtension string) (string, erro
 	// Return the temp file path
 	return tempFile.Name(), nil
 }
-
-//func GenerateContent(apiKey, fileURI, mimeType string) (string, error) {
-//	// Prepare the request body
-//	body := map[string]interface{}{
-//		"contents": []map[string]interface{}{
-//			{
-//				"role": "user",
-//				"parts": []map[string]interface{}{
-//					{
-//						"fileData": map[string]interface{}{
-//							"fileUri":  fileURI,
-//							"mimeType": mimeType,
-//						},
-//					},
-//				},
-//			},
-//			{
-//				"role": "user",
-//				"parts": []map[string]interface{}{
-//					{
-//						"text": "What is this image?",
-//					},
-//				},
-//			},
-//		},
-//		"systemInstruction": map[string]interface{}{
-//			"role": "user",
-//			"parts": []map[string]interface{}{
-//				{
-//					"text": "You are a friendly and empathetic assistant who is very creative and rational. You understand human emotions and moods well, and you always strive to connect closely with users. You must communicate in Indonesian language.",
-//				},
-//			},
-//		},
-//		"generationConfig": map[string]interface{}{
-//			"temperature":       1,
-//			"topK":              64,
-//			"topP":              0.95,
-//			"maxOutputTokens":   8192,
-//			"responseMimeType":  "text/plain",
-//		},
-//	}
-//
-//	bodyBytes, err := json.Marshal(body)
-//	if err != nil {
-//		return "", fmt.Errorf("failed to marshal request body: %v", err)
-//	}
-//
-//	// Prepare the request URL
-//	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", apiKey)
-//
-//	// Send the POST request
-//	response, err := Post(url, bodyBytes)
-//	if err != nil {
-//		return "", fmt.Errorf("failed to send POST request: %v", err)
-//	}
-//
-//	return response, nil
-//}

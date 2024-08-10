@@ -13,7 +13,6 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
-	"os"
 	"strings"
 )
 
@@ -169,6 +168,18 @@ func MessageHandler(v *events.Message) {
 			}
 			pName = contactName.PushName
 		}
+		// Load History if nil
+		if enums.ChatCache[targetJid.String()] == nil {
+			var tempCache map[string]interface{}
+			tempCache, err = enums.GetChatData(targetJid.String())
+			if err != nil && strings.HasPrefix(err.Error(), "failed to retrieve chat data") {
+				SendQuoted(targetJid, msg, "*OH NO!* Something happened to your chat history! Contact Developer if this problem persists :(\n\n> %s", err.Error())
+				return
+			}
+			if tempCache != nil {
+				enums.ChatCache[targetJid.String()] = tempCache
+			}
+		}
 		switch mtype {
 		// Text Message
 		case enums.Text:
@@ -178,7 +189,9 @@ func MessageHandler(v *events.Message) {
 			} else if *msg.Conversation != "" {
 				teks = *msg.Conversation
 			}
-			switch teks {
+			command := strings.ToLower(strings.Split(teks, " ")[0])
+			args := strings.Split(teks, " ")[1:]
+			switch command {
 			case "ping":
 				SendQuoted(targetJid, msg, "pong! from *weago* btw..")
 			case "use-ai":
@@ -187,26 +200,31 @@ func MessageHandler(v *events.Message) {
 			case "disable-ai":
 				enums.GroupChat[targetJid.String()].UseAI = false
 				SendQuoted(targetJid, msg, "> *Aika* has been disabled for this chat!")
+			case "db-info":
+				if args[0] != "" {
+					maps, err := enums.GetChatData(args[0])
+					if err != nil {
+						SendQuoted(targetJid, msg, err.Error())
+						fmt.Errorf(err.Error())
+						return
+					}
+					SendQuoted(targetJid, msg, "%#v", maps)
+				}
 			default:
 				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
-					// if enums.SimilarLong(teks, "aika", 0.18) {
-					// if targetJid.String() == enums.BotInfo.NumberJid.String() {
+					if len(teks) >= 9000 {
+						SendQuoted(targetJid, msg, "Maaf ya! Aika gabisa nerima pesan yang panjang 😭")
+						return
+					}
 					fmt.Printf("Display Name: %s\n\n", pName)
-					// cachedVal := enums.GetValueString(teks, enums.LLM)
-					// if cachedVal != "" {
-					// SendQuoted(targetJid, msg, cachedVal)
-					// } else {
-					// Capture user message
-					enums.AddMessage(targetJid, "user", pName+": "+teks, "", false)
+					enums.AddMessage(targetJid, "user", pName+": "+teks, nil, false)
 					// Prepare json data body
 					jsonData, err := json.Marshal(enums.ChatCache[targetJid.String()])
 					if err != nil {
 						fmt.Println(err.Error())
 						return
 					}
-					// SendQuoted(targetJid, msg, "%#v", enums.ChatCache[targetJid.String()])
 
-					// responseText, err := functions.Post("https://curhat.yuv.workers.dev", jsonData)
 					responseText, err := functions.Post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key="+enums.BotInfo.ApiKey, jsonData)
 					if err != nil {
 						fmt.Println(err.Error())
@@ -217,10 +235,16 @@ func MessageHandler(v *events.Message) {
 						SendQuoted(targetJid, msg, responseText)
 
 						// Capture assistant message
-						enums.AddMessage(targetJid, "model", responseText, "", false)
+						enums.AddMessage(targetJid, "model", responseText, nil, false)
 
 						// Print Total TextMemory
 						fmt.Printf("Text Memory:\n%v\n\n", enums.ChatCache[targetJid.String()])
+
+						// After processing the message
+						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
+						if err != nil {
+							fmt.Println("Error saving chat data:", err)
+						}
 					}
 				}
 			}
@@ -245,33 +269,18 @@ func MessageHandler(v *events.Message) {
 				SendImage(target, nil, bufferData, "", "image/png", "Test Image")
 			default:
 				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
-					// fmt.Printf("Got Image Type: %#v")
+					if len(teks) >= 9000 {
+						SendQuoted(targetJid, msg, "Maaf ya! Aika gabisa nerima pesan yang panjang 😭")
+						return
+					}
 					// Capture Image Buffer
 					bufferData, err := enums.Client.DownloadAny(msg)
 					if err != nil {
 						fmt.Errorf(err.Error())
 					}
 
-					// Save the buffer to a temp file
-					fileExtension := ".jpeg" // Adjust this based on your image type
-					tempFilePath, err := functions.SaveBufferToTempFile(bufferData, fileExtension)
-					if err != nil {
-						fmt.Printf("Error saving buffer to temp file: %v\n", err)
-						return
-					}
-					defer os.Remove(tempFilePath) // Clean up the temp file after use
-
-					// Upload Image
-					fileURI, err := functions.UploadImage(tempFilePath, "image/jpeg")
-					if err != nil {
-						fmt.Printf("Error uploading image: %v\n", err)
-						return
-					}
-
-					fmt.Printf("File URI: %s\n", fileURI)
-
 					// Capture user message
-					enums.AddMessage(targetJid, "user", pName+": "+teks, fileURI, true)
+					enums.AddMessage(targetJid, "user", pName+": "+teks, bufferData, true)
 					// Prepare json data body
 					jsonData, err := json.Marshal(enums.ChatCache[targetJid.String()])
 					if err != nil {
@@ -279,20 +288,26 @@ func MessageHandler(v *events.Message) {
 						return
 					}
 
-					// responseText, err := functions.Post("https://curhat.yuv.workers.dev", jsonData)
 					responseText, err := functions.Post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key="+enums.BotInfo.ApiKey, jsonData)
 					if err != nil {
 						fmt.Println(err.Error())
 						SendQuoted(targetJid, msg, err.Error())
 						return
 					}
-					SendQuoted(targetJid, msg, responseText)
+					SendQuoted(targetJid, msg, clearText)
 
 					// Capture assistant message
-					enums.AddMessage(targetJid, "model", responseText, "", false)
+					enums.AddMessage(targetJid, "model", responseText, nil, false)
 
 					// Print Total TextMemory
 					fmt.Printf("(IMAGE) Text Memory:\n%v\n\n", enums.ChatCache[targetJid.String()])
+
+					// After processing the message
+					err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
+					if err != nil {
+						fmt.Println("Error saving chat data:", err)
+					}
+
 				}
 			}
 		default:

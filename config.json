@@ -1,7 +1,9 @@
 {
-	"bot_number": "PHONE_NUMBER",
-	"owner_number": "PHONE_NUMBER",
+	"bot_number": "6282124501984",
+	"owner_number": "6282124501984",
 	"admin_list": [],
-	"gemma_key": "YOUR_API_KEY",
-	"db_path": "./database/session.db"
+	"gemma_key": "AIzaSyA3huRO_MTNhMshNEBUng4aDk9PhsmndVI",
+	"session_path": "database/session.db",
+	"settings_path": "database/settings.db",
+	"chat_path": "database/chat.db"
 }

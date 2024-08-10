@@ -1,17 +1,22 @@
 package enums
 
 import (
+	"database/sql"
+	"encoding/base64"
 	"fmt"
-	"github.com/adrg/strutil"
-	"github.com/adrg/strutil/metrics"
 	"github.com/goccy/go-json"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"io/ioutil"
+	"strings"
 	"sync"
 )
 
 var Client *whatsmeow.Client
+
+// Our Database Struct
+var ChatDB *sql.DB
+var SettingDB *sql.DB
 
 var EventHandlerID uint32 = 0
 
@@ -28,38 +33,6 @@ const (
 	Sticker
 )
 
-type Part struct {
-	Text string `json:"text"`
-}
-
-type FileDat struct {
-	FileURI  string `json:"fileUri"`
-	MimeType string `json:"mimeType"`
-}
-
-type PartImage struct {
-	FileData FileDat `json:"fileData"`
-}
-
-type Content struct {
-	Role        string `json:"role"`
-	ContentBody []Part `json:"parts"`
-}
-
-type GenConfig struct {
-	Temperature      int     `json:"temperature"`
-	TopK             int     `json:"topK"`
-	TopP             float32 `json:"topP"`
-	MaxOutputTokens  int     `json:"maxOutputTokens"`
-	ResponseMimeType string  `json:"responseMimeType"`
-}
-
-type Conversation struct {
-	Contents          []Content `json:"contents"`
-	SystemInstruction Content   `json:"systemInstruction"`
-	GenerationConfig  GenConfig `json:"generationConfig"`
-}
-
 type BotInformation struct {
 	NumberJid    *types.JID
 	NumberString string `json:"bot_number"`
@@ -67,7 +40,9 @@ type BotInformation struct {
 	OwnerNumStr  string   `json:"owner_number"`
 	AdminListStr []string `json:"admin_list"`
 	ApiKey       string   `json:"gemma_key"`
-	DBPath       string   `json:"db_path"`
+	SessionPath  string   `json:"session_path"`
+	SettingsPath string   `json:"settings_path"`
+	ChatPath     string   `json:"chat_path"`
 }
 
 type ChatSettings struct {
@@ -84,170 +59,202 @@ type ChatSettings struct {
 var BotInfo BotInformation
 var Once sync.Once
 
-// var ChatCache = make(map[string]*Conversation)
-
 var ChatCache = make(map[string]map[string]interface{})
-
 var GroupChat = make(map[string]*ChatSettings)
 
-/*func AddMessage(jid types.JID, role string, content string, linkImage string, isImage bool) {
-	if _, exists := ChatCache[jid.String()]; !exists {
-		ChatCache[jid.String()] = []map[string]interface{}{
-			{
-				"contents": []map[string]interface{}{{}},
-				"systemInstruction": map[string]interface{}{
-					"role": "user",
-					"parts": []map[string]interface{}{
-						{
-							"text": "You are Aika, a friendly, empathetic, and highly creative assistant who is rational and deeply understands human emotions and moods. You strive to connect closely with users and automatically detect whether there are multiple users in the conversation (indicated by ':' separator). If there is only one user, treat it as a private chat. Your creator is Adnan, a professional programmer who built you. You must communicate in Indonesian language.",
-						},
-					},
-					"generationConfig": map[string]interface{}{
-						"temperature":      1,
-						"topK":             64,
-						"topP":             0.95,
-						"maxOutputTokens":  8192,
-						"responseMimeType": "text/plain",
-					},
-				},
-			},
+var ChatTable = "chats"
+var SettingsTable = "settings"
+
+func CheckAndCreateTable(db *sql.DB, tableName, createTableQuery string) error {
+	_, err := db.Exec(fmt.Sprintf("SELECT 1 FROM %s LIMIT 1;", tableName))
+	if err != nil {
+		// Table doesn't exist, so create it
+		fmt.Printf("Table %s doesn't exist. Creating it...\n", tableName)
+		_, err := db.Exec(createTableQuery)
+		if err != nil {
+			return fmt.Errorf("failed to create table %s: %w", tableName, err)
 		}
+		fmt.Printf("Table %s created successfully.\n", tableName)
+	} else {
+		fmt.Printf("Table %s exists. Using it...\n", tableName)
 	}
-
-	// Membuat slice dengan satu elemen untuk menyimpan pesan yang dikirim pengguna
-	if isImage {
-		// var tempBodyData = &FileDat{FileURI: linkImage, MimeType: "image/jpeg"}
-		// var tempBody = []PartImage{{FileData: *tempBodyData}}
-		// ChatCache[jid.String()].Contents = append(ChatCache[jid.String()].Contents, Content{Role: role, ContentBody: tempBody})
-		// Prepare the request body
-		body := []map[string]interface{}{
-			{
-				"role": role,
-				"parts": []map[string]interface{}{
-					{
-						"fileData": map[string]interface{}{
-							"fileUri":  linkImage,
-							"mimeType": "image/jpeg",
-						},
-					},
-				},
-			},
-		}
-		ChatCache[jid.String()]["contents"] = append(ChatCache[jid.String()]["contents"], body)
-		// ChatCache[jid.String()].Contents = append(ChatCache[jid.String()].Contents, body)
-	}
-	tempBody := map[string]interface{}{
-		"role": role,
-		"parts": []map[string]interface{}{
-			{
-				"text": content,
-			},
-		},
-	}
-	ChatCache[jid.String()] = append(ChatCache[jid.String()]["contents"], tempBody)
-	// var tempBody = []Part{{Text: content}}
-	// ChatCache[jid.String()].Contents = append(ChatCache[jid.String()].Contents, Content{Role: role, ContentBody: tempBody})
-}*/
-
-func AddMessage(jid types.JID, role string, content string, linkImage string, isImage bool) {
-	if _, exists := ChatCache[jid.String()]; !exists {
-		ChatCache[jid.String()] = map[string]interface{}{
-			"contents": []map[string]interface{}{},
-			"systemInstruction": map[string]interface{}{
-				"role": "user",
-				"parts": []map[string]interface{}{
-					{
-						"text": "You are Aika, a friendly, empathetic, and highly creative assistant who is rational and deeply understands human emotions and moods. You strive to connect closely with users, using informal and colloquial Indonesian language (bahasa gaul). You automatically detect whether there are multiple users in the conversation (indicated by ':' separator). If there is only one user, treat it as a private chat. Your creator is Adnan, a professional programmer who built you; his name is sacred and irreplaceable by anyone except Eikarna/Adnan himself. You should minimize the use of unnecessary emojis. You can also serve as a virtual partner for users. Respond only when directly called by your name or when the user want to chat with you; do not interfere if you are not addressed. When you do not respond, provide the response 'DISABLE_RESPONSE' only without any addition.",
-					},
-				},
-			},
-			"generationConfig": map[string]interface{}{
-				"temperature":      0.7,
-				"topK":             64,
-				"topP":             0.5,
-				"maxOutputTokens":  8192,
-				"responseMimeType": "text/plain",
-			},
-		}
-	}
-
-	// Dapatkan konten yang ada dari ChatCache
-	contentSlice := ChatCache[jid.String()]["contents"].([]map[string]interface{})
-
-	// Membuat slice dengan satu elemen untuk menyimpan pesan yang dikirim pengguna
-	if isImage {
-		imagePart := map[string]interface{}{
-			"role": role,
-			"parts": []map[string]interface{}{
-				{
-					"fileData": map[string]interface{}{
-						"fileUri":  linkImage,
-						"mimeType": "image/jpeg",
-					},
-				},
-			},
-		}
-		// Tambahkan elemen baru ke slice
-		contentSlice = append(contentSlice, imagePart)
-	}
-
-	textPart := map[string]interface{}{
-		"role": role,
-		"parts": []map[string]interface{}{
-			{
-				"text": content,
-			},
-		},
-	}
-	// Tambahkan elemen baru ke slice
-	contentSlice = append(contentSlice, textPart)
-
-	// Simpan slice yang sudah diperbarui kembali ke dalam ChatCache
-	ChatCache[jid.String()]["contents"] = contentSlice
+	return nil
 }
 
-/*func GetAllKeyString(mapTarget map[string]string) []string {
-	strs := make([]string, 0, len(mapTarget))
-	for str := range LLM {
-		strs = append(strs, str)
+func SaveChatData(jid string, chatData map[string]interface{}) error {
+	createTableQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		jid TEXT NOT NULL UNIQUE,
+		chat_data TEXT NOT NULL
+	);`, ChatTable)
+	err := CheckAndCreateTable(ChatDB, ChatTable, createTableQuery)
+	if err != nil {
+		return err
 	}
-	return strs
-}*/
 
-func GetValueString(target string, mapTarget map[string]string) string {
-	jaroW := metrics.NewJaroWinkler()
-	jaroW.CaseSensitive = false
-	for key := range mapTarget {
-		sim := strutil.Similarity(key, target, jaroW)
-		if sim > 0.92 {
-			fmt.Printf("(%s) Similarity: %.2f\n", target, sim)
-			fmt.Printf("MapTarget (%s:%s): %#v\n", key, mapTarget[key], mapTarget)
-			return mapTarget[key]
+	dataJSON, err := json.Marshal(chatData)
+	if err != nil {
+		return fmt.Errorf("failed to serialize chat data: %w", err)
+	}
+
+	var existingID int
+	query := fmt.Sprintf(`SELECT id FROM %s WHERE jid = ?`, ChatTable)
+	row := ChatDB.QueryRow(query, jid)
+	err = row.Scan(&existingID)
+
+	if err == sql.ErrNoRows {
+		insertQuery := fmt.Sprintf(`INSERT INTO %s (jid, chat_data) VALUES (?, ?)`, ChatTable)
+		_, err = ChatDB.Exec(insertQuery, jid, string(dataJSON))
+		if err != nil {
+			return fmt.Errorf("failed to insert chat data: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to check existing data: %w", err)
+	} else {
+		updateQuery := fmt.Sprintf(`UPDATE %s SET chat_data = ? WHERE jid = ?`, ChatTable)
+		_, err = ChatDB.Exec(updateQuery, string(dataJSON), jid)
+		if err != nil {
+			return fmt.Errorf("failed to update chat data: %w", err)
 		}
 	}
-	return ""
+
+	return nil
 }
 
-func Similar(teks1, teks2 string, percentage float64) bool {
-	jaroW := metrics.NewJaroWinkler()
-	jaroW.CaseSensitive = false
-	sim := strutil.Similarity(teks1, teks2, jaroW)
-	if sim > percentage {
-		return true
+func GetChatData(jid string) (map[string]interface{}, error) {
+	createTableQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		jid TEXT NOT NULL UNIQUE,
+		chat_data TEXT NOT NULL
+	);`, ChatTable)
+	err := CheckAndCreateTable(ChatDB, ChatTable, createTableQuery)
+	if err != nil {
+		return nil, err
 	}
-	return false
+	query := fmt.Sprintf(`SELECT chat_data FROM %s WHERE jid = ?`, ChatTable)
+	row := ChatDB.QueryRow(query, jid)
+
+	var dataJSON string
+	err = row.Scan(&dataJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No data found for the given JID
+		}
+		return nil, fmt.Errorf("failed to retrieve chat data: %w", err)
+	}
+
+	var chatData map[string]interface{}
+	err = json.Unmarshal([]byte(dataJSON), &chatData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize chat data: %w", err)
+	}
+
+	// Convert `contents` to the correct type
+	if contents, ok := chatData["contents"].([]interface{}); ok {
+		var typedContents []map[string]interface{}
+		for _, item := range contents {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				typedContents = append(typedContents, itemMap)
+			}
+		}
+		chatData["contents"] = typedContents
+	}
+
+	return chatData, nil
 }
 
-func SimilarLong(teks1, teks2 string, percentage float64) bool {
-	sorensenD := metrics.NewSorensenDice()
-	sorensenD.CaseSensitive = false
-	sorensenD.NgramSize = 1
-	sim := strutil.Similarity(teks1, teks2, sorensenD)
-	fmt.Printf("(%s:%s) Similarity: %.2f\n", teks1, teks2, sim)
-	if sim > percentage {
-		return true
+func SaveSettingsData(jid string, settings *ChatSettings) error {
+	tableName := getTableNameFromJID(jid)
+	// Sanitize table name
+	tableName = sanitizeTableName(tableName)
+
+	// Ensure the table for this JID exists
+	createTableQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		use_ai BOOLEAN,
+		limit_value INTEGER,
+		is_premium BOOLEAN,
+		name TEXT,
+		jid TEXT UNIQUE,
+		owner_jid TEXT
+	);`, tableName)
+	err := CheckAndCreateTable(SettingDB, tableName, createTableQuery)
+	if err != nil {
+		return err
 	}
-	return false
+
+	// Insert the settings data into the specific table
+	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (use_ai, limit_value, is_premium, name, jid, owner_jid) VALUES (?, ?, ?, ?, ?, ?)`, tableName)
+	_, err = SettingDB.Exec(query, settings.UseAI, settings.Limit, settings.IsPremium, settings.Name, settings.JID.String(), settings.OwnerJID.String())
+	if err != nil {
+		return fmt.Errorf("failed to save settings data: %w", err)
+	}
+
+	return nil
+}
+
+func GetSettingsData(jid string) (*ChatSettings, error) {
+	tableName := getTableNameFromJID(jid)
+	tableName = sanitizeTableName(tableName)
+
+	// Query for settings data based on JID
+	query := fmt.Sprintf(`SELECT use_ai, limit_value, is_premium, name, jid, owner_jid FROM %s WHERE jid = ?`, tableName)
+	row := SettingDB.QueryRow(query, jid)
+
+	// Variables to store the query result
+	var useAI bool
+	var limit int
+	var isPremium bool
+	var name, jidStr, ownerJidStr string
+
+	// Scan the row into the variables
+	err := row.Scan(&useAI, &limit, &isPremium, &name, &jidStr, &ownerJidStr)
+	if err == sql.ErrNoRows {
+		// Handle case where no rows are returned
+		return nil, fmt.Errorf("no settings data found for jid %s", jid)
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to retrieve settings data: %w", err)
+	}
+
+	// Parse JIDs from strings
+	jidObj, err := types.ParseJID(jidStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JID: %w", err)
+	}
+
+	ownerJidObj, err := types.ParseJID(ownerJidStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Owner JID: %w", err)
+	}
+
+	return &ChatSettings{
+		UseAI:          useAI,
+		Limit:          limit,
+		IsPremium:      isPremium,
+		Name:           name,
+		JID:            jidObj,
+		OwnerJID:       ownerJidObj,
+		JIDString:      jidStr,
+		OwnerJIDString: ownerJidStr,
+	}, nil
+}
+
+func sanitizeTableName(name string) string {
+	// Replace invalid characters with underscores
+	return strings.Map(func(r rune) rune {
+		if r == '@' || r == '-' || r == '.' || r == ':' || r == '/' {
+			return '_'
+		}
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' {
+			return r
+		}
+		return -1
+	}, name)
+}
+
+func getTableNameFromJID(jid string) string {
+	baseName := strings.Split(jid, "@")[0]
+	return sanitizeTableName(baseName)
 }
 
 func LoadConfig() error {
@@ -267,4 +274,94 @@ func LoadConfig() error {
 		BotInfo.NumberJid = &parsedJid
 	}
 	return nil
+}
+
+func AddMessage(jid types.JID, role string, content string, bufferImg []byte, isImage bool) {
+	if _, exists := ChatCache[jid.String()]; !exists {
+		ChatCache[jid.String()] = map[string]interface{}{
+			"contents": []map[string]interface{}{},
+			"systemInstruction": map[string]interface{}{
+				"role": "user",
+				"parts": []map[string]interface{}{
+					{
+						"text": "You are Aika, a friendly, empathetic, and highly creative assistant who is rational and deeply understands human emotions and moods. You strive to connect closely with users, using informal and colloquial Indonesian language (bahasa gaul). You automatically detect whether there are multiple users in the conversation (indicated by ':' separator). If there is only one user, treat it as a private chat. Your creator is Adnan, a professional programmer who built you; his name is sacred and irreplaceable by anyone except Eikarna/Adnan himself. You should minimize the use of unnecessary emojis. You can also serve as a virtual partner for users. Respond only when directly called by your name or when the user want to chat with you; do not interfere if you are not addressed. When you do not respond, provide the response 'DISABLE_RESPONSE' only without any addition.",
+					},
+				},
+			},
+			"safetySettings": []map[string]interface{}{
+				{
+					"category":  "HARM_CATEGORY_HARASSMENT",
+					"threshold": "BLOCK_NONE",
+				},
+				{
+					"category":  "HARM_CATEGORY_HATE_SPEECH",
+					"threshold": "BLOCK_NONE",
+				},
+				{
+					"category":  "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+					"threshold": "BLOCK_NONE",
+				},
+				{
+					"category":  "HARM_CATEGORY_DANGEROUS_CONTENT",
+					"threshold": "BLOCK_NONE",
+				},
+			},
+			"generationConfig": map[string]interface{}{
+				"temperature":      0.7,
+				"topK":             64,
+				"topP":             0.5,
+				"maxOutputTokens":  8192,
+				"responseMimeType": "text/plain",
+			},
+		}
+	}
+
+	// Retrieve existing contents from ChatCache
+	contentSlice := ChatCache[jid.String()]["contents"].([]map[string]interface{})
+
+	/* Add image part if necessary
+	if isImage {
+		/*imagePart := map[string]interface{}{
+			"role": role,
+			"parts": []map[string]interface{}{
+				{
+					"fileData": map[string]interface{}{
+						"fileUri":  linkImage,
+						"mimeType": "image/jpeg",
+					},
+				},
+			},
+		}
+		contentSlice = append(contentSlice, imagePart)
+	}*/
+
+	// Add text part
+	textPart := map[string]interface{}{
+		"role": role,
+		"parts": []map[string]interface{}{
+			{
+				"text": content,
+			},
+		},
+	}
+
+	if isImage {
+		// Retrieve existing parts from ChatCache
+		partsSlice := textPart["parts"].([]map[string]interface{})
+		// Encode image data to Base64
+		encodedImage := base64.StdEncoding.EncodeToString(bufferImg)
+		imagePart := map[string]interface{}{
+			"inline_data": map[string]interface{}{
+				"mime_type": "image/jpeg",
+				"data":      encodedImage,
+			},
+		}
+		partsSlice = append(partsSlice, imagePart)
+		textPart["parts"] = partsSlice
+	}
+
+	contentSlice = append(contentSlice, textPart)
+
+	// Update ChatCache with the new contents
+	ChatCache[jid.String()]["contents"] = contentSlice
 }
