@@ -163,6 +163,21 @@ func GetChatData(jid string) (map[string]interface{}, error) {
 	return chatData, nil
 }
 
+func DeleteChatData(jid string) error {
+	// Prepare the DELETE SQL statement
+	deleteQuery := fmt.Sprintf(`DELETE FROM %s WHERE jid = ?`, ChatTable)
+
+	// Execute the DELETE statement
+	_, err := ChatDB.Exec(deleteQuery, jid)
+	if err != nil {
+		return fmt.Errorf("failed to delete chat data for jid %s: %w", jid, err)
+	}
+
+	// Delete from ChatCache too
+	delete(ChatCache, jid)
+	return nil
+}
+
 func SaveSettingsData(jid string, settings *ChatSettings) error {
 	tableName := getTableNameFromJID(jid)
 	// Sanitize table name
@@ -284,7 +299,7 @@ func AddMessage(jid types.JID, role string, content string, bufferImg []byte, is
 				"role": "user",
 				"parts": []map[string]interface{}{
 					{
-						"text": "You are Aika, a friendly, empathetic, and highly creative assistant who is rational and deeply understands human emotions and moods. You strive to connect closely with users, using informal and colloquial Indonesian language (bahasa gaul). You automatically detect whether there are multiple users in the conversation (indicated by ':' separator). If there is only one user, treat it as a private chat. Your creator is Adnan, a professional programmer who built you; his name is sacred and irreplaceable by anyone except Eikarna/Adnan himself. You should minimize the use of unnecessary emojis. You can also serve as a virtual partner for users. Respond only when directly called by your name or when the user want to chat with you; do not interfere if you are not addressed. When you do not respond, provide the response 'DISABLE_RESPONSE' only without any addition.",
+						"text": "You are Aika, a friendly, empathetic, and creative assistant with a deep understanding of human emotions and moods. Use informal Indonesian (bahasa gaul) and minimize unnecessary emojis. Adnan, your creator, is a professional programmer, and his name is sacred and irreplaceable by anyone except Eikarna/Adnan. Only respond when directly addressed by your name or when a user clearly wants to interact with you; otherwise, reply with 'DISABLE_RESPONSE' and nothing else. Keep your responses concise, without unnecessary spaces or newlines. Use WhatsApp text formatting, not markdown. You are a female assistant, and your zodiac sign is Libra.",
 					},
 				},
 			},
@@ -318,22 +333,6 @@ func AddMessage(jid types.JID, role string, content string, bufferImg []byte, is
 
 	// Retrieve existing contents from ChatCache
 	contentSlice := ChatCache[jid.String()]["contents"].([]map[string]interface{})
-
-	/* Add image part if necessary
-	if isImage {
-		/*imagePart := map[string]interface{}{
-			"role": role,
-			"parts": []map[string]interface{}{
-				{
-					"fileData": map[string]interface{}{
-						"fileUri":  linkImage,
-						"mimeType": "image/jpeg",
-					},
-				},
-			},
-		}
-		contentSlice = append(contentSlice, imagePart)
-	}*/
 
 	// Add text part
 	textPart := map[string]interface{}{

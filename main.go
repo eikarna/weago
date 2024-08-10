@@ -63,7 +63,7 @@ func setupDatabase() error {
 }
 
 func setupWhatsMeow() (*whatsmeow.Client, error) {
-	dbLog := waLog.Stdout("Database", "WARNING", true)
+	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	container, err := sqlstore.New("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&mode=rwc&cache=shared&_sync=1", enums.BotInfo.SessionPath), dbLog)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQLStore container: %w", err)
@@ -74,7 +74,7 @@ func setupWhatsMeow() (*whatsmeow.Client, error) {
 		return nil, fmt.Errorf("failed to get first device: %w", err)
 	}
 
-	clientLog := waLog.Stdout("Client", "WARNING", true)
+	clientLog := waLog.Stdout("Client", "DEBUG", true)
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 	enums.Client = client
 	return client, nil

@@ -208,8 +208,15 @@ func MessageHandler(v *events.Message) {
 						fmt.Errorf(err.Error())
 						return
 					}
-					SendQuoted(targetJid, msg, "%#v", maps)
+					SendQuoted(targetJid, msg, "%s", functions.PpJSON(maps))
 				}
+			case "reset":
+				err := enums.DeleteChatData(targetJid.String())
+				if err != nil {
+					SendQuoted(targetJid, msg, err.Error())
+					return
+				}
+				SendQuoted(targetJid, msg, "> *Aika* Successfully delete chat history for current session!")
 			default:
 				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
 					if len(teks) >= 9000 {
@@ -218,6 +225,14 @@ func MessageHandler(v *events.Message) {
 					}
 					fmt.Printf("Display Name: %s\n\n", pName)
 					enums.AddMessage(targetJid, "user", pName+": "+teks, nil, false)
+					// Send only last 4 messages to avoid obfuscation, if there 4 length
+					if len(enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})) > 5 {
+						contentSlice := enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})
+						before := len(contentSlice) - 5
+						contentSlice = contentSlice[before:]
+						enums.ChatCache[targetJid.String()]["contents"] = contentSlice
+					}
+
 					// Prepare json data body
 					jsonData, err := json.Marshal(enums.ChatCache[targetJid.String()])
 					if err != nil {
@@ -231,14 +246,14 @@ func MessageHandler(v *events.Message) {
 						SendQuoted(targetJid, msg, err.Error())
 						return
 					}
+					if strings.HasPrefix(strings.ToLower(responseText)[:5], "aika: ") {
+						responseText = strings.ReplaceAll(responseText, "aika: ", "")
+					}
 					if strings.ToLower(strings.TrimSpace(responseText)) != "disable_response" {
 						SendQuoted(targetJid, msg, responseText)
 
 						// Capture assistant message
 						enums.AddMessage(targetJid, "model", responseText, nil, false)
-
-						// Print Total TextMemory
-						fmt.Printf("Text Memory:\n%v\n\n", enums.ChatCache[targetJid.String()])
 
 						// After processing the message
 						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
@@ -294,20 +309,21 @@ func MessageHandler(v *events.Message) {
 						SendQuoted(targetJid, msg, err.Error())
 						return
 					}
-					SendQuoted(targetJid, msg, clearText)
-
-					// Capture assistant message
-					enums.AddMessage(targetJid, "model", responseText, nil, false)
-
-					// Print Total TextMemory
-					fmt.Printf("(IMAGE) Text Memory:\n%v\n\n", enums.ChatCache[targetJid.String()])
-
-					// After processing the message
-					err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
-					if err != nil {
-						fmt.Println("Error saving chat data:", err)
+					if strings.HasPrefix(strings.ToLower(responseText)[:5], "aika: ") {
+						responseText = strings.ReplaceAll(responseText, "aika: ", "")
 					}
+					if strings.ToLower(strings.TrimSpace(responseText)) != "disable_response" {
+						SendQuoted(targetJid, msg, functions.NormalizeText(responseText))
 
+						// Capture assistant message
+						enums.AddMessage(targetJid, "model", responseText, nil, false)
+
+						// After processing the message
+						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
+						if err != nil {
+							fmt.Println("Error saving chat data:", err)
+						}
+					}
 				}
 			}
 		default:

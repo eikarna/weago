@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -17,6 +18,35 @@ func RemoveColonDigits(input string) string {
 	parts := strings.Split(input, "@")
 	localPart := strings.Split(parts[0], ":")[0]
 	return localPart + "@" + parts[1]
+}
+
+func NormalizeText(text string) string {
+	// Remove extra spaces between words
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+
+	// Replace multiple newlines with a single newline
+	text = regexp.MustCompile(`\n+`).ReplaceAllString(text, "\n")
+
+	// Trim any leading or trailing spaces and newlines
+	text = strings.TrimSpace(text)
+
+	return text
+}
+
+func NormalizeNewlines(text string) string {
+	// Replace multiple newlines with a single newline
+	re := regexp.MustCompile(`\n+`)
+	normalizedText := re.ReplaceAllString(text, "\n")
+
+	// Optionally, you can trim leading and trailing newlines
+	normalizedText = strings.Trim(normalizedText, "\n")
+
+	return normalizedText
+}
+
+func PpJSON(data interface{}) string {
+	a, _ := json.MarshalIndent(data, "", "  ")
+	return string(a)
 }
 
 func Get(url string) (string, error) {
