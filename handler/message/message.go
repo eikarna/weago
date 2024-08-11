@@ -6,6 +6,7 @@ import (
 
 	"github.com/eikarna/weago/enums"
 	"github.com/eikarna/weago/functions"
+	"github.com/eikarna/weago/libs/ai"
 	"github.com/goccy/go-json"
 	"go.mau.fi/whatsmeow"
 	wa "go.mau.fi/whatsmeow"
@@ -224,7 +225,7 @@ func MessageHandler(v *events.Message) {
 						return
 					}
 					fmt.Printf("Display Name: %s\n\n", pName)
-					enums.AddMessage(targetJid, "user", pName+": "+teks, nil, false)
+					enums.AddMessage(targetJid, "user", pName+": "+teks, nil, "", "")
 					// Send only last 4 messages to avoid obfuscation, if there 4 length
 					if len(enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})) > 5 {
 						contentSlice := enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})
@@ -253,7 +254,7 @@ func MessageHandler(v *events.Message) {
 						SendQuoted(targetJid, msg, responseText)
 
 						// Capture assistant message
-						enums.AddMessage(targetJid, "model", responseText, nil, false)
+						enums.AddMessage(targetJid, "model", responseText, nil, "", "")
 
 						// After processing the message
 						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
@@ -295,7 +296,7 @@ func MessageHandler(v *events.Message) {
 					}
 
 					// Capture user message
-					enums.AddMessage(targetJid, "user", pName+": "+teks, bufferData, true)
+					enums.AddMessage(targetJid, "user", pName+": "+teks, bufferData, "image", "")
 					// Prepare json data body
 					jsonData, err := json.Marshal(enums.ChatCache[targetJid.String()])
 					if err != nil {
@@ -316,7 +317,7 @@ func MessageHandler(v *events.Message) {
 						SendQuoted(targetJid, msg, functions.NormalizeText(responseText))
 
 						// Capture assistant message
-						enums.AddMessage(targetJid, "model", responseText, nil, false)
+						enums.AddMessage(targetJid, "model", responseText, nil, "", "")
 
 						// After processing the message
 						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
@@ -326,6 +327,65 @@ func MessageHandler(v *events.Message) {
 					}
 				}
 			}
+		// Video Message
+		case enums.Video:
+			teks := ""
+			if msg.VideoMessage.Caption != nil {
+				teks = *msg.VideoMessage.Caption
+			}
+			switch teks {
+			case "uploadsw":
+				target, err := types.ParseJID("status@broadcast")
+				if err != nil {
+					fmt.Errorf(err.Error())
+					return
+				}
+				bufferData, err := enums.Client.DownloadAny(msg)
+				if err != nil {
+					fmt.Errorf(err.Error())
+				}
+				SendImage(target, nil, bufferData, "", "image/png", "Test Image")
+			default:
+				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
+					if len(teks) >= 9000 {
+						SendQuoted(targetJid, msg, "Maaf ya! Aika gabisa nerima pesan yang panjang 😭")
+						return
+					}
+					// Capture Image Buffer
+					bufferData, err := enums.Client.DownloadAny(msg)
+					if err != nil {
+						fmt.Errorf(err.Error())
+					}
+
+					// Save Buffer to Temp File
+					fName, err := functions.SaveBufferToTempFile(bufferData, ".mp4")
+					if err != nil {
+						fmt.Errorf(err.Error())
+					}
+					responseText, err := ai.AskVideoHeadless(targetJid, pName, fName, teks)
+					if err != nil {
+						fmt.Println(err.Error())
+						SendQuoted(targetJid, msg, err.Error())
+						return
+					}
+					if strings.HasPrefix(strings.ToLower(responseText)[:5], "aika: ") {
+						responseText = strings.ReplaceAll(responseText, "aika: ", "")
+					}
+					if strings.ToLower(strings.TrimSpace(responseText)) != "disable_response" {
+						SendQuoted(targetJid, msg, functions.NormalizeText(responseText))
+
+						// Capture assistant message
+						enums.AddMessage(targetJid, "model", responseText, nil, "", "")
+
+						// After processing the message
+						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
+						if err != nil {
+							fmt.Println("Error saving chat data:", err)
+						}
+					}
+				}
+			}
+		//TODO
 		default:
 			SendConversation(*enums.BotInfo.NumberJid, "Got Type Message: %d (%s),\n\nMessage Struct: %v", mtype, v.Info.MediaType, v)
 		}

@@ -201,7 +201,7 @@ func UploadImage(filePath, mimeType string) (string, error) {
 
 func SaveBufferToTempFile(bufferData []byte, fileExtension string) (string, error) {
 	// Create a temporary file with the specified extension
-	tempFile, err := ioutil.TempFile("tmp", fmt.Sprintf("whatsmeow_image_*%s", fileExtension))
+	tempFile, err := ioutil.TempFile("", fmt.Sprintf("whatsmeow_buffer_*%s", fileExtension))
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %v", err)
 	}

@@ -7,8 +7,8 @@ import (
 	"github.com/goccy/go-json"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 	"io/ioutil"
-	"strings"
 	"sync"
 )
 
@@ -16,7 +16,6 @@ var Client *whatsmeow.Client
 
 // Our Database Struct
 var ChatDB *sql.DB
-var SettingDB *sql.DB
 
 var EventHandlerID uint32 = 0
 
@@ -63,7 +62,8 @@ var ChatCache = make(map[string]map[string]interface{})
 var GroupChat = make(map[string]*ChatSettings)
 
 var ChatTable = "chats"
-var SettingsTable = "settings"
+
+var Log = waLog.Stdout("Main", "DEBUG", true)
 
 func CheckAndCreateTable(db *sql.DB, tableName, createTableQuery string) error {
 	_, err := db.Exec(fmt.Sprintf("SELECT 1 FROM %s LIMIT 1;", tableName))
@@ -178,100 +178,6 @@ func DeleteChatData(jid string) error {
 	return nil
 }
 
-func SaveSettingsData(jid string, settings *ChatSettings) error {
-	tableName := getTableNameFromJID(jid)
-	// Sanitize table name
-	tableName = sanitizeTableName(tableName)
-
-	// Ensure the table for this JID exists
-	createTableQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		use_ai BOOLEAN,
-		limit_value INTEGER,
-		is_premium BOOLEAN,
-		name TEXT,
-		jid TEXT UNIQUE,
-		owner_jid TEXT
-	);`, tableName)
-	err := CheckAndCreateTable(SettingDB, tableName, createTableQuery)
-	if err != nil {
-		return err
-	}
-
-	// Insert the settings data into the specific table
-	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (use_ai, limit_value, is_premium, name, jid, owner_jid) VALUES (?, ?, ?, ?, ?, ?)`, tableName)
-	_, err = SettingDB.Exec(query, settings.UseAI, settings.Limit, settings.IsPremium, settings.Name, settings.JID.String(), settings.OwnerJID.String())
-	if err != nil {
-		return fmt.Errorf("failed to save settings data: %w", err)
-	}
-
-	return nil
-}
-
-func GetSettingsData(jid string) (*ChatSettings, error) {
-	tableName := getTableNameFromJID(jid)
-	tableName = sanitizeTableName(tableName)
-
-	// Query for settings data based on JID
-	query := fmt.Sprintf(`SELECT use_ai, limit_value, is_premium, name, jid, owner_jid FROM %s WHERE jid = ?`, tableName)
-	row := SettingDB.QueryRow(query, jid)
-
-	// Variables to store the query result
-	var useAI bool
-	var limit int
-	var isPremium bool
-	var name, jidStr, ownerJidStr string
-
-	// Scan the row into the variables
-	err := row.Scan(&useAI, &limit, &isPremium, &name, &jidStr, &ownerJidStr)
-	if err == sql.ErrNoRows {
-		// Handle case where no rows are returned
-		return nil, fmt.Errorf("no settings data found for jid %s", jid)
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to retrieve settings data: %w", err)
-	}
-
-	// Parse JIDs from strings
-	jidObj, err := types.ParseJID(jidStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse JID: %w", err)
-	}
-
-	ownerJidObj, err := types.ParseJID(ownerJidStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse Owner JID: %w", err)
-	}
-
-	return &ChatSettings{
-		UseAI:          useAI,
-		Limit:          limit,
-		IsPremium:      isPremium,
-		Name:           name,
-		JID:            jidObj,
-		OwnerJID:       ownerJidObj,
-		JIDString:      jidStr,
-		OwnerJIDString: ownerJidStr,
-	}, nil
-}
-
-func sanitizeTableName(name string) string {
-	// Replace invalid characters with underscores
-	return strings.Map(func(r rune) rune {
-		if r == '@' || r == '-' || r == '.' || r == ':' || r == '/' {
-			return '_'
-		}
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' {
-			return r
-		}
-		return -1
-	}, name)
-}
-
-func getTableNameFromJID(jid string) string {
-	baseName := strings.Split(jid, "@")[0]
-	return sanitizeTableName(baseName)
-}
-
 func LoadConfig() error {
 	file, err := ioutil.ReadFile("./config.json")
 	if err != nil {
@@ -291,7 +197,7 @@ func LoadConfig() error {
 	return nil
 }
 
-func AddMessage(jid types.JID, role string, content string, bufferImg []byte, isImage bool) {
+func AddMessage(jid types.JID, role string, content string, bufferImg []byte, typeMedia, fileLink string) {
 	if _, exists := ChatCache[jid.String()]; !exists {
 		ChatCache[jid.String()] = map[string]interface{}{
 			"contents": []map[string]interface{}{},
@@ -343,10 +249,9 @@ func AddMessage(jid types.JID, role string, content string, bufferImg []byte, is
 			},
 		},
 	}
-
-	if isImage {
-		// Retrieve existing parts from ChatCache
-		partsSlice := textPart["parts"].([]map[string]interface{})
+	// Retrieve existing parts from ChatCache
+	partsSlice := textPart["parts"].([]map[string]interface{})
+	if typeMedia == "image" {
 		// Encode image data to Base64
 		encodedImage := base64.StdEncoding.EncodeToString(bufferImg)
 		imagePart := map[string]interface{}{
@@ -356,6 +261,15 @@ func AddMessage(jid types.JID, role string, content string, bufferImg []byte, is
 			},
 		}
 		partsSlice = append(partsSlice, imagePart)
+		textPart["parts"] = partsSlice
+	} else if typeMedia == "video" {
+		videoPart := map[string]interface{}{
+			"file_data": map[string]interface{}{
+				"mime_type": "video/mp4",
+				"file_uri":  fileLink,
+			},
+		}
+		partsSlice = append(partsSlice, videoPart)
 		textPart["parts"] = partsSlice
 	}
 
