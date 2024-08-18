@@ -125,13 +125,17 @@ func MessageHandler(v *events.Message) {
 		if err != nil {
 			fmt.Errorf(err.Error())
 		}
+		err = enums.LoadChatInfo(enums.ChatDB, targetJid.String())
+		if err != nil {
+			fmt.Println("Error loading chat info data:", err)
+		}
 		// Get Group Info
 		groupInfo, err := enums.Client.GetGroupInfo(targetJid)
 		if err != nil {
 			fmt.Errorf(err.Error())
 		}
-		if enums.GroupChat[targetJid.String()] == nil {
-			enums.GroupChat[targetJid.String()] = &enums.ChatSettings{
+		if enums.ChatInfo[targetJid.String()] == nil {
+			enums.ChatInfo[targetJid.String()] = &enums.ChatSettings{
 				JID:            targetJid,
 				OwnerJID:       groupInfo.OwnerJID,
 				JIDString:      targetJid.String(),
@@ -147,7 +151,28 @@ func MessageHandler(v *events.Message) {
 		if err != nil {
 			fmt.Errorf(err.Error())
 		}
+		err = enums.LoadChatInfo(enums.ChatDB, targetJid.String())
+		if err != nil {
+			fmt.Println("Error loading chat info data:", err)
+		}
+		if enums.ChatInfo[targetJid.String()] == nil {
+			contactName, err := enums.Client.Store.Contacts.GetContact(targetJid)
+			if err != nil {
+				fmt.Errorf(err.Error())
+			}
+			enums.ChatInfo[targetJid.String()] = &enums.ChatSettings{
+				JID:            targetJid,
+				OwnerJID:       targetJid,
+				JIDString:      targetJid.String(),
+				OwnerJIDString: targetJid.String(),
+				Name:           contactName.PushName,
+				UseAI:          false,
+				IsPremium:      false,
+				Limit:          10,
+			}
+		}
 	}
+
 	if strings.Split(targetJid.String(), "@")[1] == "s.whatsapp.net" || strings.Split(targetJid.String(), "@")[1] == "g.us" {
 		// Get PushName
 		var contactName types.ContactInfo
@@ -181,6 +206,13 @@ func MessageHandler(v *events.Message) {
 				enums.ChatCache[targetJid.String()] = tempCache
 			}
 		}
+		if enums.ChatInfo[targetJid.String()] == nil {
+			err = enums.LoadChatInfo(enums.ChatDB, targetJid.String())
+			if err != nil && strings.HasPrefix(err.Error(), "failed to retrieve chat info") {
+				SendQuoted(targetJid, msg, "*OH NO!* Something happened to your chat info! Contact Developer if this problem persists :(\n\n> %s", err.Error())
+				return
+			}
+		}
 		switch mtype {
 		// Text Message
 		case enums.Text:
@@ -196,10 +228,10 @@ func MessageHandler(v *events.Message) {
 			case "ping":
 				SendQuoted(targetJid, msg, "pong! from *weago* btw..")
 			case "use-ai":
-				enums.GroupChat[targetJid.String()].UseAI = true
-				SendQuoted(targetJid, msg, "> *Aika* has been enabled for this chat!")
+				enums.ChatInfo[targetJid.String()].UseAI = true
+				SendQuoted(targetJid, msg, "> *Aika* has been enabled for this chat!\n\n%v", enums.ChatInfo[targetJid.String()])
 			case "disable-ai":
-				enums.GroupChat[targetJid.String()].UseAI = false
+				enums.ChatInfo[targetJid.String()].UseAI = false
 				SendQuoted(targetJid, msg, "> *Aika* has been disabled for this chat!")
 			case "db-info":
 				if args[0] != "" {
@@ -219,7 +251,7 @@ func MessageHandler(v *events.Message) {
 				}
 				SendQuoted(targetJid, msg, "> *Aika* Successfully delete chat history for current session!")
 			default:
-				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
+				if enums.ChatInfo[targetJid.String()] != nil && enums.ChatInfo[targetJid.String()].UseAI {
 					if len(teks) >= 9000 {
 						SendQuoted(targetJid, msg, "Maaf ya! Aika gabisa nerima pesan yang panjang 😭")
 						return
@@ -255,12 +287,6 @@ func MessageHandler(v *events.Message) {
 
 						// Capture assistant message
 						enums.AddMessage(targetJid, "model", responseText, nil, "", "")
-
-						// After processing the message
-						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
-						if err != nil {
-							fmt.Println("Error saving chat data:", err)
-						}
 					}
 				}
 			}
@@ -284,7 +310,7 @@ func MessageHandler(v *events.Message) {
 				}
 				SendImage(target, nil, bufferData, "", "image/png", "Test Image")
 			default:
-				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
+				if enums.ChatInfo[targetJid.String()] != nil && enums.ChatInfo[targetJid.String()].UseAI {
 					if len(teks) >= 9000 {
 						SendQuoted(targetJid, msg, "Maaf ya! Aika gabisa nerima pesan yang panjang 😭")
 						return
@@ -297,6 +323,15 @@ func MessageHandler(v *events.Message) {
 
 					// Capture user message
 					enums.AddMessage(targetJid, "user", pName+": "+teks, bufferData, "image", "")
+
+					// Send only last 4 messages to avoid obfuscation, if there 4 length
+					if len(enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})) > 5 {
+						contentSlice := enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})
+						before := len(contentSlice) - 5
+						contentSlice = contentSlice[before:]
+						enums.ChatCache[targetJid.String()]["contents"] = contentSlice
+					}
+
 					// Prepare json data body
 					jsonData, err := json.Marshal(enums.ChatCache[targetJid.String()])
 					if err != nil {
@@ -318,12 +353,6 @@ func MessageHandler(v *events.Message) {
 
 						// Capture assistant message
 						enums.AddMessage(targetJid, "model", responseText, nil, "", "")
-
-						// After processing the message
-						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
-						if err != nil {
-							fmt.Println("Error saving chat data:", err)
-						}
 					}
 				}
 			}
@@ -346,11 +375,20 @@ func MessageHandler(v *events.Message) {
 				}
 				SendImage(target, nil, bufferData, "", "image/png", "Test Image")
 			default:
-				if enums.GroupChat[targetJid.String()] != nil && enums.GroupChat[targetJid.String()].UseAI {
+				if enums.ChatInfo[targetJid.String()] != nil && enums.ChatInfo[targetJid.String()].UseAI {
 					if len(teks) >= 9000 {
 						SendQuoted(targetJid, msg, "Maaf ya! Aika gabisa nerima pesan yang panjang 😭")
 						return
 					}
+
+					// Send only last 4 messages to avoid obfuscation, if there 4 length
+					if len(enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})) > 5 {
+						contentSlice := enums.ChatCache[targetJid.String()]["contents"].([]map[string]interface{})
+						before := len(contentSlice) - 5
+						contentSlice = contentSlice[before:]
+						enums.ChatCache[targetJid.String()]["contents"] = contentSlice
+					}
+
 					// Capture Image Buffer
 					bufferData, err := enums.Client.DownloadAny(msg)
 					if err != nil {
@@ -376,12 +414,6 @@ func MessageHandler(v *events.Message) {
 
 						// Capture assistant message
 						enums.AddMessage(targetJid, "model", responseText, nil, "", "")
-
-						// After processing the message
-						err = enums.SaveChatData(targetJid.String(), enums.ChatCache[targetJid.String()])
-						if err != nil {
-							fmt.Println("Error saving chat data:", err)
-						}
 					}
 				}
 			}

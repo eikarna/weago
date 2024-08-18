@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
-	"database/sql"
 
 	"github.com/eikarna/weago/enums"
+	"github.com/eikarna/weago/functions"
 	"github.com/eikarna/weago/handler/message"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
@@ -96,6 +97,8 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		// Start AutoSave
+		enums.Once.Do(functions.SaveSystem)
 	}
 
 	// Listen to Ctrl+C (you can also do something else that prevents the program from exiting)

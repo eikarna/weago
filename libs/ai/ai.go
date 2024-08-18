@@ -100,13 +100,6 @@ func LoadChatSession(db *sql.DB, jid string) error {
 		return fmt.Errorf("failed to load chat session: %w", err)
 	}
 
-	/*	var sessionData genai.ChatSession
-		err = json.Unmarshal(data, &sessionData)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal chat session data: %w", err)
-		}
-
-		ChatSession[jid] = &sessionData*/
 	// Unmarshal JSON data into a map
 	var chatData map[string]interface{}
 	err = json.Unmarshal(data, &chatData)
@@ -159,8 +152,6 @@ func LoadChatSession(db *sql.DB, jid string) error {
 	// After populating the session, store it in the global ChatSession map
 	ChatSession[jid] = session
 	log.Printf("Session:\n%v\n\nChatSession[jid]:\n%v\n\n", session, ChatSession[jid])
-	// log.Printf("(ai:LoadChatSession) Loaded Chat Session:\n%v\n\nUnmarshalled Version:\n%v\n\n", data, sessionData)
-	// panic(fmt.Sprintf("(ai:LoadChatSession) Loaded Chat Session:\n%v\n\nUnmarshalled Version:\n%v\n\n", data, sessionData))
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"io/ioutil"
+	"log"
 	"sync"
 )
 
@@ -16,6 +17,10 @@ var Client *whatsmeow.Client
 
 // Our Database Struct
 var ChatDB *sql.DB
+
+// Saving System
+var SaveStop = make(chan bool)
+var SaveSuccess bool = true
 
 var EventHandlerID uint32 = 0
 
@@ -59,11 +64,101 @@ var BotInfo BotInformation
 var Once sync.Once
 
 var ChatCache = make(map[string]map[string]interface{})
-var GroupChat = make(map[string]*ChatSettings)
+var ChatInfo = make(map[string]*ChatSettings)
 
 var ChatTable = "chats"
+var ChatInfoTable = "chatInfo"
 
 var Log = waLog.Stdout("Main", "DEBUG", true)
+
+// Marshal the genai.ChatSession to JSON and save to the database
+func SaveChatInfo(db *sql.DB, jid string) error {
+	createTableQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			jid TEXT NOT NULL UNIQUE,
+			chat_info TEXT NOT NULL
+		);`, ChatInfoTable)
+	err := CheckAndCreateTable(ChatDB, ChatInfoTable, createTableQuery)
+	if err != nil {
+		return err
+	}
+
+	ci := ChatInfo[jid]
+	if ci == nil {
+		return fmt.Errorf("no chat session found for JID %s", jid)
+	}
+
+	data, err := json.Marshal(ci)
+	if err != nil {
+		return fmt.Errorf("failed to marshal chat session data: %w", err)
+	}
+
+	var existingID int
+	query := fmt.Sprintf(`SELECT id FROM %s WHERE jid = ?`, ChatInfoTable)
+	row := ChatDB.QueryRow(query, jid)
+	err = row.Scan(&existingID)
+
+	if err == sql.ErrNoRows {
+		insertQuery := fmt.Sprintf(`INSERT INTO %s (jid, chat_info) VALUES (?, ?)`, ChatInfoTable)
+		_, err = ChatDB.Exec(insertQuery, jid, string(data))
+		if err != nil {
+			return fmt.Errorf("failed to insert chat data: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to check existing data: %w", err)
+	} else {
+		updateQuery := fmt.Sprintf(`UPDATE %s SET chat_info = ? WHERE jid = ?`, ChatInfoTable)
+		_, err = ChatDB.Exec(updateQuery, string(data), jid)
+		if err != nil {
+			return fmt.Errorf("failed to update chat data: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Unmarshal JSON from the database and load it into the ChatInfo map
+func LoadChatInfo(db *sql.DB, jid string) error {
+
+	createTableQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			jid TEXT NOT NULL UNIQUE,
+			chat_info TEXT NOT NULL
+		);`, ChatInfoTable)
+	err := CheckAndCreateTable(ChatDB, ChatInfoTable, createTableQuery)
+	if err != nil {
+		return err
+	}
+
+	query := `SELECT chat_info FROM chatInfo WHERE jid = ?`
+	row := db.QueryRow(query, jid)
+
+	var data []byte
+	err = row.Scan(&data)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// No info data found
+			log.Printf("No Chat Info Data found with jid %s: %v", jid, err)
+			return nil
+		}
+		return fmt.Errorf("failed to load chat info: %w", err)
+	}
+
+	// Unmarshal JSON data into struct
+	infos := &ChatSettings{}
+	err = json.Unmarshal(data, &infos)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal chat info data: %w", err)
+	}
+
+	// Manually parse map data into genai.ChatSession struct
+
+	// Parse additional fields from chatData map into session as needed
+
+	// After populating the session, store it in the global ChatSession map
+	ChatInfo[jid] = infos
+	return nil
+}
 
 func CheckAndCreateTable(db *sql.DB, tableName, createTableQuery string) error {
 	_, err := db.Exec(fmt.Sprintf("SELECT 1 FROM %s LIMIT 1;", tableName))
@@ -74,9 +169,6 @@ func CheckAndCreateTable(db *sql.DB, tableName, createTableQuery string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create table %s: %w", tableName, err)
 		}
-		fmt.Printf("Table %s created successfully.\n", tableName)
-	} else {
-		fmt.Printf("Table %s exists. Using it...\n", tableName)
 	}
 	return nil
 }
